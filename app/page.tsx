@@ -8,8 +8,8 @@ import { PunchCard } from '@/components/punch-card';
 import { VehicleLogBook } from '@/components/vehicle-log';
 import { ReceiptManagement } from '@/components/receipt-management';
 import { ThemeProvider } from '@/components/theme-provider';
+import { LanguageProvider } from '@/lib/language-context'; // LANGKAH 1: IMPORT INI
 
-// Pembolehubah default untuk demo
 const DEFAULT_USER_ID = 'demo-user';
 
 export default function Home() {
@@ -53,21 +53,23 @@ export default function Home() {
   }
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-      <div className="min-h-screen bg-background text-foreground">
-        {/* @ts-ignore - Bypass strict type checking */}
-        <Header user={user} onLogout={handleLogout} onLogin={handleLogin} />
-        
-        <Navigation activeTab={activeTab} onTabChange={setActiveTab} />
-        
-        <main className="container mx-auto py-6 px-4">
-  {/* Kita tambah (activeTab as any) untuk "tutup mulut" TypeScript sekejap supaya boleh build */}
-  {(activeTab as any) === 'dashboard' && <Dashboard userId={DEFAULT_USER_ID} />}
-  {(activeTab as any) === 'punch-card' && <PunchCard userId={DEFAULT_USER_ID} />}
-  {(activeTab as any) === 'vehicle-log' && <VehicleLogBook userId={DEFAULT_USER_ID} />}
-  {(activeTab as any) === 'receipts' && <ReceiptManagement userId={DEFAULT_USER_ID} />}
-</main>
-      </div>
-    </ThemeProvider>
+    /* LANGKAH 2: BALUT SEMUA KOD DENGAN LanguageProvider */
+    <LanguageProvider>
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <div className="min-h-screen bg-background text-foreground">
+          {/* @ts-ignore */}
+          <Header user={user} onLogout={handleLogout} onLogin={handleLogin} />
+          
+          <Navigation activeTab={activeTab} onTabChange={setActiveTab} />
+          
+          <main className="container mx-auto py-6 px-4">
+            {(activeTab as any) === 'dashboard' && <Dashboard userId={DEFAULT_USER_ID} />}
+            {(activeTab as any) === 'punch-card' && <PunchCard userId={DEFAULT_USER_ID} />}
+            {(activeTab as any) === 'vehicle-log' && <VehicleLogBook userId={DEFAULT_USER_ID} />}
+            {(activeTab as any) === 'receipts' && <ReceiptManagement userId={DEFAULT_USER_ID} />}
+          </main>
+        </div>
+      </ThemeProvider>
+    </LanguageProvider>
   );
 }
