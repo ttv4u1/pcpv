@@ -248,7 +248,7 @@ export function PunchCard({ userId }: PunchCardProps) {
             <div className="p-4 bg-secondary/50 rounded-xl">
               <p className="text-sm text-muted-foreground">{t.status}</p>
               <div className="mt-1">
-                {getStatusBadge(todayRecord.status)}
+                {getStatusBadge(todayRecord.status as PunchStatus)}
               </div>
             </div>
             
@@ -307,7 +307,7 @@ export function PunchCard({ userId }: PunchCardProps) {
                       {record.punch_out ? formatTime12h(record.punch_out) : '--:--'}
                     </td>
                     <td className="py-3 px-4">
-                      {getStatusBadge(record.status)}
+                      {getStatusBadge(record.status as PunchStatus)}
                     </td>
                     <td className="py-3 px-4 font-medium text-green-600 dark:text-green-400">
                       {record.ot_hours.toFixed(2)}h

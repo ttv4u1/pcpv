@@ -3,7 +3,7 @@
 import { useLanguage } from '@/lib/language-context'
 import { LayoutDashboard, Clock, Car, Receipt } from 'lucide-react'
 
-type TabType = 'dashboard' | 'punch' | 'vehicle' | 'receipts'
+export type TabType = 'dashboard' | 'punch' | 'vehicle' | 'receipts'
 
 interface NavigationProps {
   activeTab: TabType
