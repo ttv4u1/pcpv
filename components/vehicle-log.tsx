@@ -17,6 +17,13 @@ import {
   Eye
 } from 'lucide-react'
 import type { VehicleLog } from '@/lib/types'
+import { 
+  insertVehicleLog, 
+  updateVehicleLog, 
+  deleteVehicleLog, 
+  getVehicleLogsByUser,
+  type DbVehicleLog
+} from '@/lib/db'
 
 interface VehicleLogBookProps {
   userId: string
@@ -38,10 +45,10 @@ const VEHICLE_TYPES = [
 
 export function VehicleLogBook({ userId }: VehicleLogBookProps) {
   const { language, t } = useLanguage()
-  const [logs, setLogs] = useState<VehicleLog[]>([])
+  const [logs, setLogs] = useState<DbVehicleLog[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [editingLog, setEditingLog] = useState<VehicleLog | null>(null)
-  const [viewingLog, setViewingLog] = useState<VehicleLog | null>(null)
+  const [editingLog, setEditingLog] = useState<DbVehicleLog | null>(null)
+  const [viewingLog, setViewingLog] = useState<DbVehicleLog | null>(null)
   
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -63,11 +70,19 @@ export function VehicleLogBook({ userId }: VehicleLogBookProps) {
     remarks: '',
   })
   
-  // Load logs from localStorage
+  // Load logs from Supabase
   useEffect(() => {
-    const saved = localStorage.getItem(`vehicle_logs_${userId}`)
-    if (saved) {
-      setLogs(JSON.parse(saved))
+    const loadLogs = async () => {
+      try {
+        const data = await getVehicleLogsByUser(userId)
+        setLogs(data)
+      } catch (error) {
+        console.error('Error loading vehicle logs:', error)
+      }
+    }
+    
+    if (userId) {
+      loadLogs()
     }
   }, [userId])
   
@@ -104,86 +119,100 @@ export function VehicleLogBook({ userId }: VehicleLogBookProps) {
     setEditingLog(null)
   }
   
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    const newLog: VehicleLog = {
-      id: editingLog?.id || crypto.randomUUID(),
-      userId,
-      date: formData.date,
-      vehicleNumber: formData.vehicleNumber,
-      vehicleType: formData.vehicleType,
-      driver: formData.driver,
-      destination: formData.destination,
-      purpose: formData.purpose,
-      departureTime: formData.departureTime,
-      returnTime: formData.returnTime,
-      odometerBefore: Number(formData.odometerBefore),
-      odometerAfter: Number(formData.odometerAfter),
-      distanceKm,
-      fuelType: formData.fuelType,
-      fuelLiters: Number(formData.fuelLiters) || 0,
-      fuelPricePerLiter: Number(formData.fuelPricePerLiter) || 0,
-      fuelTotalRM,
-      tngAmount: Number(formData.tngAmount) || 0,
-      parkingAmount: Number(formData.parkingAmount) || 0,
-      tollAmount: Number(formData.tollAmount) || 0,
-      remarks: formData.remarks,
-      createdAt: editingLog?.createdAt || new Date().toISOString(),
+    try {
+      const logData = {
+        user_id: userId,
+        date: formData.date,
+        vehicle_number: formData.vehicleNumber,
+        vehicle_type: formData.vehicleType,
+        driver: formData.driver,
+        destination: formData.destination,
+        purpose: formData.purpose,
+        departure_time: formData.departureTime || null,
+        return_time: formData.returnTime || null,
+        odometer_before: formData.odometerBefore ? Number(formData.odometerBefore) : null,
+        odometer_after: formData.odometerAfter ? Number(formData.odometerAfter) : null,
+        fuel_type: formData.fuelType,
+        fuel_liters: formData.fuelLiters ? Number(formData.fuelLiters) : null,
+        fuel_price_per_liter: formData.fuelPricePerLiter ? Number(formData.fuelPricePerLiter) : null,
+        tng_amount: formData.tngAmount ? Number(formData.tngAmount) : null,
+        parking_amount: formData.parkingAmount ? Number(formData.parkingAmount) : null,
+        toll_amount: formData.tollAmount ? Number(formData.tollAmount) : null,
+        remarks: formData.remarks || null,
+      }
+      
+      if (editingLog) {
+        // Update existing record
+        await updateVehicleLog(editingLog.id, logData)
+      } else {
+        // Insert new record
+        await insertVehicleLog(logData)
+      }
+      
+      // Refresh logs from Supabase
+      const updatedLogs = await getVehicleLogsByUser(userId)
+      setLogs(updatedLogs)
+      
+      resetForm()
+      setShowForm(false)
+    } catch (error) {
+      console.error('Error saving vehicle log:', error)
+      alert(language === 'ms' ? 'Ralat menyimpan log kenderaan' : 'Error saving vehicle log')
     }
-    
-    let updatedLogs: VehicleLog[]
-    if (editingLog) {
-      updatedLogs = logs.map(log => log.id === editingLog.id ? newLog : log)
-    } else {
-      updatedLogs = [...logs, newLog]
-    }
-    
-    setLogs(updatedLogs)
-    localStorage.setItem(`vehicle_logs_${userId}`, JSON.stringify(updatedLogs))
-    
-    resetForm()
-    setShowForm(false)
   }
   
-  const handleEdit = (log: VehicleLog) => {
+  const handleEdit = (log: DbVehicleLog) => {
     setFormData({
       date: log.date,
-      vehicleNumber: log.vehicleNumber,
-      vehicleType: log.vehicleType,
+      vehicleNumber: log.vehicle_number,
+      vehicleType: log.vehicle_type,
       driver: log.driver,
       destination: log.destination,
       purpose: log.purpose,
-      departureTime: log.departureTime,
-      returnTime: log.returnTime,
-      odometerBefore: log.odometerBefore.toString(),
-      odometerAfter: log.odometerAfter.toString(),
-      fuelType: log.fuelType,
-      fuelLiters: log.fuelLiters.toString(),
-      fuelPricePerLiter: log.fuelPricePerLiter.toString(),
-      tngAmount: log.tngAmount.toString(),
-      parkingAmount: log.parkingAmount.toString(),
-      tollAmount: log.tollAmount.toString(),
-      remarks: log.remarks,
+      departureTime: log.departure_time || '',
+      returnTime: log.return_time || '',
+      odometerBefore: log.odometer_before?.toString() || '',
+      odometerAfter: log.odometer_after?.toString() || '',
+      fuelType: log.fuel_type || 'RON95',
+      fuelLiters: log.fuel_liters?.toString() || '',
+      fuelPricePerLiter: log.fuel_price_per_liter?.toString() || '',
+      tngAmount: log.tng_amount?.toString() || '',
+      parkingAmount: log.parking_amount?.toString() || '',
+      tollAmount: log.toll_amount?.toString() || '',
+      remarks: log.remarks || '',
     })
     setEditingLog(log)
     setShowForm(true)
   }
   
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm(language === 'ms' ? 'Adakah anda pasti mahu memadam log ini?' : 'Are you sure you want to delete this log?')) {
-      const updatedLogs = logs.filter(log => log.id !== id)
-      setLogs(updatedLogs)
-      localStorage.setItem(`vehicle_logs_${userId}`, JSON.stringify(updatedLogs))
+      try {
+        await deleteVehicleLog(id)
+        
+        // Refresh logs from Supabase
+        const updatedLogs = await getVehicleLogsByUser(userId)
+        setLogs(updatedLogs)
+      } catch (error) {
+        console.error('Error deleting vehicle log:', error)
+        alert(language === 'ms' ? 'Ralat memadam log kenderaan' : 'Error deleting vehicle log')
+      }
     }
   }
   
   // Calculate totals
-  const totalFuel = logs.reduce((sum, log) => sum + log.fuelTotalRM, 0)
-  const totalTNG = logs.reduce((sum, log) => sum + log.tngAmount, 0)
-  const totalParking = logs.reduce((sum, log) => sum + log.parkingAmount, 0)
-  const totalToll = logs.reduce((sum, log) => sum + log.tollAmount, 0)
-  const totalDistance = logs.reduce((sum, log) => sum + log.distanceKm, 0)
+  const totalFuel = logs.reduce((sum, log) => {
+    return sum + (log.fuel_liters && log.fuel_price_per_liter ? log.fuel_liters * log.fuel_price_per_liter : 0)
+  }, 0)
+  const totalTNG = logs.reduce((sum, log) => sum + (log.tng_amount || 0), 0)
+  const totalParking = logs.reduce((sum, log) => sum + (log.parking_amount || 0), 0)
+  const totalToll = logs.reduce((sum, log) => sum + (log.toll_amount || 0), 0)
+  const totalDistance = logs.reduce((sum, log) => {
+    return sum + (log.odometer_after && log.odometer_before ? log.odometer_after - log.odometer_before : 0)
+  }, 0)
   
   return (
     <div className="space-y-6">
@@ -528,7 +557,7 @@ export function VehicleLogBook({ userId }: VehicleLogBookProps) {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">{t.vehicleNumber}</p>
-                  <p className="font-medium">{viewingLog.vehicleNumber}</p>
+                  <p className="font-medium">{viewingLog.vehicle_number}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">{t.driver}</p>
@@ -548,16 +577,16 @@ export function VehicleLogBook({ userId }: VehicleLogBookProps) {
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">{t.distanceTraveled}</p>
-                  <p className="font-bold text-xl">{viewingLog.distanceKm} KM</p>
+                  <p className="font-bold text-xl">{viewingLog.odometer_after && viewingLog.odometer_before ? viewingLog.odometer_after - viewingLog.odometer_before : 0} KM</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">{t.fuelTotal}</p>
-                  <p className="font-bold text-xl text-green-600">RM {viewingLog.fuelTotalRM.toFixed(2)}</p>
+                  <p className="font-bold text-xl text-green-600">RM {((viewingLog.fuel_liters || 0) * (viewingLog.fuel_price_per_liter || 0)).toFixed(2)}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">{t.total}</p>
                   <p className="font-bold text-xl text-blue-600">
-                    RM {(viewingLog.fuelTotalRM + viewingLog.tngAmount + viewingLog.parkingAmount + viewingLog.tollAmount).toFixed(2)}
+                    RM {(((viewingLog.fuel_liters || 0) * (viewingLog.fuel_price_per_liter || 0)) + (viewingLog.tng_amount || 0) + (viewingLog.parking_amount || 0) + (viewingLog.toll_amount || 0)).toFixed(2)}
                   </p>
                 </div>
               </div>
@@ -599,11 +628,11 @@ export function VehicleLogBook({ userId }: VehicleLogBookProps) {
                 {logs.sort((a, b) => b.date.localeCompare(a.date)).map((log) => (
                   <tr key={log.id} className="border-b border-border/50 hover:bg-secondary/30">
                     <td className="py-3 px-4">{new Date(log.date).toLocaleDateString()}</td>
-                    <td className="py-3 px-4 font-medium">{log.vehicleNumber}</td>
+                    <td className="py-3 px-4 font-medium">{log.vehicle_number}</td>
                     <td className="py-3 px-4">{log.destination}</td>
-                    <td className="py-3 px-4 font-medium">{log.distanceKm}</td>
+                    <td className="py-3 px-4 font-medium">{log.odometer_after && log.odometer_before ? log.odometer_after - log.odometer_before : 0}</td>
                     <td className="py-3 px-4 font-medium text-green-600 dark:text-green-400">
-                      RM {log.fuelTotalRM.toFixed(2)}
+                      RM {((log.fuel_liters || 0) * (log.fuel_price_per_liter || 0)).toFixed(2)}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex gap-2">

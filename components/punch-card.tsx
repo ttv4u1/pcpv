@@ -22,6 +22,13 @@ import {
   type PunchStatus
 } from '@/lib/punch-utils'
 import type { PunchRecord } from '@/lib/types'
+import { 
+  insertAttendance, 
+  updateAttendance, 
+  getAttendanceByUserAndDate, 
+  getAttendanceByUserAndMonth,
+  type DbAttendance
+} from '@/lib/db'
 
 interface PunchCardProps {
   userId: string
@@ -30,8 +37,8 @@ interface PunchCardProps {
 export function PunchCard({ userId }: PunchCardProps) {
   const { language, t } = useLanguage()
   const [currentTime, setCurrentTime] = useState(new Date())
-  const [todayRecord, setTodayRecord] = useState<PunchRecord | null>(null)
-  const [monthlyRecords, setMonthlyRecords] = useState<PunchRecord[]>([])
+  const [todayRecord, setTodayRecord] = useState<DbAttendance | null>(null)
+  const [monthlyRecords, setMonthlyRecords] = useState<DbAttendance[]>([])
   const [isPunching, setIsPunching] = useState(false)
   
   // Update clock every second
@@ -40,85 +47,89 @@ export function PunchCard({ userId }: PunchCardProps) {
     return () => clearInterval(timer)
   }, [])
   
-  // Load records from localStorage (simulating Supabase)
+  // Load records from Supabase
   useEffect(() => {
-    const today = new Date().toISOString().split('T')[0]
-    const saved = localStorage.getItem(`punch_records_${userId}`)
-    if (saved) {
-      const records: PunchRecord[] = JSON.parse(saved)
-      const todayRec = records.find(r => r.date === today)
-      setTodayRecord(todayRec || null)
-      
-      // Filter for current month
-      const currentMonth = new Date().toISOString().slice(0, 7)
-      setMonthlyRecords(records.filter(r => r.date.startsWith(currentMonth)))
+    const loadRecords = async () => {
+      try {
+        const today = new Date().toISOString().split('T')[0]
+        const todayRec = await getAttendanceByUserAndDate(userId, today)
+        setTodayRecord(todayRec || null)
+        
+        // Filter for current month
+        const currentMonth = new Date().toISOString().slice(0, 7)
+        const monthRecords = await getAttendanceByUserAndMonth(userId, currentMonth)
+        setMonthlyRecords(monthRecords)
+      } catch (error) {
+        console.error('Error loading attendance records:', error)
+      }
+    }
+    
+    if (userId) {
+      loadRecords()
     }
   }, [userId])
   
-  const handlePunchIn = () => {
+  const handlePunchIn = async () => {
     setIsPunching(true)
     
-    setTimeout(() => {
+    try {
       const now = new Date()
       const time = formatTime(now)
       const status = getPunchInStatus(time)
+      const today = now.toISOString().split('T')[0]
       
-      const newRecord: PunchRecord = {
-        id: crypto.randomUUID(),
-        userId,
-        date: now.toISOString().split('T')[0],
-        punchIn: time,
-        punchOut: null,
+      const newRecord = await insertAttendance({
+        user_id: userId,
+        date: today,
+        punch_in: time,
+        punch_out: null,
         status,
-        otHours: 0,
-        createdAt: now.toISOString(),
-      }
+        ot_hours: 0,
+      })
       
       setTodayRecord(newRecord)
-      saveRecord(newRecord)
+      
+      // Refresh monthly records
+      const currentMonth = new Date().toISOString().slice(0, 7)
+      const monthRecords = await getAttendanceByUserAndMonth(userId, currentMonth)
+      setMonthlyRecords(monthRecords)
+    } catch (error) {
+      console.error('Error inserting attendance:', error)
+      alert(language === 'ms' ? 'Ralat menyimpan kehadiran' : 'Error saving attendance')
+    } finally {
       setIsPunching(false)
-    }, 500)
+    }
   }
   
-  const handlePunchOut = () => {
+  const handlePunchOut = async () => {
     if (!todayRecord) return
     
     setIsPunching(true)
     
-    setTimeout(() => {
+    try {
       const now = new Date()
       const time = formatTime(now)
       const outStatus = getPunchOutStatus(time)
+      const otHours = todayRecord.punch_in ? calculateOTHours(todayRecord.punch_in, time) : 0
       
-      const updatedRecord: PunchRecord = {
-        ...todayRecord,
-        punchOut: time,
+      const updatedRecord = await updateAttendance(todayRecord.id, {
+        punch_out: time,
         status: outStatus === 'ot-late' ? 'ot-late' : todayRecord.status,
-        otHours: todayRecord.punchIn ? calculateOTHours(todayRecord.punchIn, time) : 0,
-      }
+        ot_hours: otHours,
+      })
       
       setTodayRecord(updatedRecord)
-      saveRecord(updatedRecord)
+      
+      // Refresh monthly records
+      const currentMonth = new Date().toISOString().slice(0, 7)
+      const monthRecords = await getAttendanceByUserAndMonth(userId, currentMonth)
+      setMonthlyRecords(monthRecords)
+    } catch (error) {
+      console.error('Error updating attendance:', error)
+      alert(language === 'ms' ? 'Ralat mengemaskini kehadiran' : 'Error updating attendance')
+    } finally {
       setIsPunching(false)
-    }, 500)
-  }
-  
-  const saveRecord = (record: PunchRecord) => {
-    const saved = localStorage.getItem(`punch_records_${userId}`)
-    const records: PunchRecord[] = saved ? JSON.parse(saved) : []
-    
-    const existingIndex = records.findIndex(r => r.date === record.date)
-    if (existingIndex >= 0) {
-      records[existingIndex] = record
-    } else {
-      records.push(record)
     }
-    
-    localStorage.setItem(`punch_records_${userId}`, JSON.stringify(records))
-    
-    // Update monthly records
-    const currentMonth = new Date().toISOString().slice(0, 7)
-    setMonthlyRecords(records.filter(r => r.date.startsWith(currentMonth)))
   }
   
   const getStatusBadge = (status: PunchStatus) => {
@@ -169,36 +180,36 @@ export function PunchCard({ userId }: PunchCardProps) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <button
           onClick={handlePunchIn}
-          disabled={!!todayRecord?.punchIn || isPunching}
+          disabled={!!todayRecord?.punch_in || isPunching}
           className={`btn-3d flex items-center justify-center gap-3 p-6 rounded-2xl text-xl font-bold transition-all ${
-            todayRecord?.punchIn
+            todayRecord?.punch_in
               ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-60'
               : 'bg-gradient-to-br from-green-500 to-green-600 text-white hover:from-green-400 hover:to-green-500'
           }`}
         >
           <LogIn className="w-8 h-8" />
           <span>{t.punchIn}</span>
-          {todayRecord?.punchIn && (
+          {todayRecord?.punch_in && (
             <span className="text-base font-normal ml-2">
-              ({formatTime12h(todayRecord.punchIn)})
+              ({formatTime12h(todayRecord.punch_in)})
             </span>
           )}
         </button>
         
         <button
           onClick={handlePunchOut}
-          disabled={!todayRecord?.punchIn || !!todayRecord?.punchOut || isPunching}
+          disabled={!todayRecord?.punch_in || !!todayRecord?.punch_out || isPunching}
           className={`btn-3d flex items-center justify-center gap-3 p-6 rounded-2xl text-xl font-bold transition-all ${
-            !todayRecord?.punchIn || todayRecord?.punchOut
+            !todayRecord?.punch_in || todayRecord?.punch_out
               ? 'bg-muted text-muted-foreground cursor-not-allowed opacity-60'
               : 'bg-gradient-to-br from-red-500 to-red-600 text-white hover:from-red-400 hover:to-red-500'
           }`}
         >
           <LogOut className="w-8 h-8" />
           <span>{t.punchOut}</span>
-          {todayRecord?.punchOut && (
+          {todayRecord?.punch_out && (
             <span className="text-base font-normal ml-2">
-              ({formatTime12h(todayRecord.punchOut)})
+              ({formatTime12h(todayRecord.punch_out)})
             </span>
           )}
         </button>
@@ -220,7 +231,7 @@ export function PunchCard({ userId }: PunchCardProps) {
                 todayRecord.status === 'ot-early' ? 'text-green-600 dark:text-green-400' :
                 'text-foreground'
               }`}>
-                {todayRecord.punchIn ? formatTime12h(todayRecord.punchIn) : '--:--'}
+                {todayRecord.punch_in ? formatTime12h(todayRecord.punch_in) : '--:--'}
               </p>
             </div>
             
@@ -230,7 +241,7 @@ export function PunchCard({ userId }: PunchCardProps) {
                 todayRecord.status === 'ot-late' ? 'text-green-600 dark:text-green-400' :
                 'text-foreground'
               }`}>
-                {todayRecord.punchOut ? formatTime12h(todayRecord.punchOut) : '--:--'}
+                {todayRecord.punch_out ? formatTime12h(todayRecord.punch_out) : '--:--'}
               </p>
             </div>
             
@@ -244,7 +255,7 @@ export function PunchCard({ userId }: PunchCardProps) {
             <div className="p-4 bg-secondary/50 rounded-xl">
               <p className="text-sm text-muted-foreground">{t.statusOT}</p>
               <p className="text-xl font-bold text-green-600 dark:text-green-400">
-                {todayRecord.otHours.toFixed(2)} {language === 'ms' ? 'jam' : 'hrs'}
+                {todayRecord.ot_hours.toFixed(2)} {language === 'ms' ? 'jam' : 'hrs'}
               </p>
             </div>
           </div>
@@ -287,19 +298,19 @@ export function PunchCard({ userId }: PunchCardProps) {
                       record.status === 'ot-early' ? 'text-green-600 dark:text-green-400' :
                       'text-foreground'
                     }`}>
-                      {record.punchIn ? formatTime12h(record.punchIn) : '--:--'}
+                      {record.punch_in ? formatTime12h(record.punch_in) : '--:--'}
                     </td>
                     <td className={`py-3 px-4 font-medium ${
                       record.status === 'ot-late' ? 'text-green-600 dark:text-green-400' :
                       'text-foreground'
                     }`}>
-                      {record.punchOut ? formatTime12h(record.punchOut) : '--:--'}
+                      {record.punch_out ? formatTime12h(record.punch_out) : '--:--'}
                     </td>
                     <td className="py-3 px-4">
                       {getStatusBadge(record.status)}
                     </td>
                     <td className="py-3 px-4 font-medium text-green-600 dark:text-green-400">
-                      {record.otHours.toFixed(2)}h
+                      {record.ot_hours.toFixed(2)}h
                     </td>
                   </tr>
                 ))}

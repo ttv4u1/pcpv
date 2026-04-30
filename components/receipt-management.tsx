@@ -18,6 +18,13 @@ import {
   Image as ImageIcon
 } from 'lucide-react'
 import type { Receipt } from '@/lib/types'
+import { supabase } from '@/lib/supabase'
+import { 
+  insertReceipt, 
+  deleteReceipt, 
+  getReceiptsByUser,
+  type DbReceipt
+} from '@/lib/db'
 
 interface ReceiptManagementProps {
   userId: string
@@ -48,26 +55,34 @@ const SUPPORTED_FILE_TYPES = [
 
 export function ReceiptManagement({ userId }: ReceiptManagementProps) {
   const { language, t } = useLanguage()
-  const [receipts, setReceipts] = useState<Receipt[]>([])
+  const [receipts, setReceipts] = useState<DbReceipt[]>([])
   const [showUpload, setShowUpload] = useState(false)
-  const [viewingReceipt, setViewingReceipt] = useState<Receipt | null>(null)
+  const [viewingReceipt, setViewingReceipt] = useState<DbReceipt | null>(null)
   const [filterType, setFilterType] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   
   const [uploadData, setUploadData] = useState({
-    type: 'fuel' as Receipt['type'],
+    type: 'fuel' as string,
     amount: '',
     description: '',
     date: new Date().toISOString().split('T')[0],
     file: null as File | null,
   })
   
-  // Load receipts from localStorage
+  // Load receipts from Supabase
   useEffect(() => {
-    const saved = localStorage.getItem(`receipts_${userId}`)
-    if (saved) {
-      setReceipts(JSON.parse(saved))
+    const loadReceipts = async () => {
+      try {
+        const data = await getReceiptsByUser(userId)
+        setReceipts(data)
+      } catch (error) {
+        console.error('Error loading receipts:', error)
+      }
+    }
+    
+    if (userId) {
+      loadReceipts()
     }
   }, [userId])
   
@@ -92,25 +107,35 @@ export function ReceiptManagement({ userId }: ReceiptManagementProps) {
       return
     }
     
-    // Convert file to base64 for localStorage storage
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const newReceipt: Receipt = {
-        id: crypto.randomUUID(),
-        userId,
+    try {
+      // Upload file to Supabase Storage
+      const fileName = `${userId}/${Date.now()}_${uploadData.file.name}`
+      const { data: uploadData2, error: uploadError } = await supabase.storage
+        .from('receipts')
+        .upload(fileName, uploadData.file)
+      
+      if (uploadError) throw uploadError
+      
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('receipts')
+        .getPublicUrl(fileName)
+      
+      // Insert receipt record
+      await insertReceipt({
+        user_id: userId,
         type: uploadData.type,
         amount: Number(uploadData.amount),
         description: uploadData.description,
-        fileUrl: reader.result as string,
-        fileName: uploadData.file!.name,
-        fileType: uploadData.file!.type,
         date: uploadData.date,
-        createdAt: new Date().toISOString(),
-      }
+        file_url: publicUrl,
+        file_name: uploadData.file.name,
+        file_type: uploadData.file.type,
+      })
       
-      const updatedReceipts = [...receipts, newReceipt]
+      // Refresh receipts from Supabase
+      const updatedReceipts = await getReceiptsByUser(userId)
       setReceipts(updatedReceipts)
-      localStorage.setItem(`receipts_${userId}`, JSON.stringify(updatedReceipts))
       
       setUploadData({
         type: 'fuel',
@@ -120,22 +145,31 @@ export function ReceiptManagement({ userId }: ReceiptManagementProps) {
         file: null,
       })
       setShowUpload(false)
+    } catch (error) {
+      console.error('Error uploading receipt:', error)
+      alert(language === 'ms' ? 'Ralat memuat naik resit' : 'Error uploading receipt')
     }
-    reader.readAsDataURL(uploadData.file)
   }
   
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm(language === 'ms' ? 'Adakah anda pasti mahu memadam resit ini?' : 'Are you sure you want to delete this receipt?')) {
-      const updatedReceipts = receipts.filter(r => r.id !== id)
-      setReceipts(updatedReceipts)
-      localStorage.setItem(`receipts_${userId}`, JSON.stringify(updatedReceipts))
+      try {
+        await deleteReceipt(id)
+        
+        // Refresh receipts from Supabase
+        const updatedReceipts = await getReceiptsByUser(userId)
+        setReceipts(updatedReceipts)
+      } catch (error) {
+        console.error('Error deleting receipt:', error)
+        alert(language === 'ms' ? 'Ralat memadam resit' : 'Error deleting receipt')
+      }
     }
   }
   
-  const handleDownload = (receipt: Receipt) => {
+  const handleDownload = (receipt: DbReceipt) => {
     const link = document.createElement('a')
-    link.href = receipt.fileUrl
-    link.download = receipt.fileName
+    link.href = receipt.file_url
+    link.download = receipt.file_name
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -150,7 +184,7 @@ export function ReceiptManagement({ userId }: ReceiptManagementProps) {
   const filteredReceipts = receipts.filter(receipt => {
     const matchesType = filterType === 'all' || receipt.type === filterType
     const matchesSearch = receipt.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          receipt.fileName.toLowerCase().includes(searchQuery.toLowerCase())
+                          receipt.file_name.toLowerCase().includes(searchQuery.toLowerCase())
     return matchesType && matchesSearch
   })
   
@@ -363,7 +397,7 @@ export function ReceiptManagement({ userId }: ReceiptManagementProps) {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
                 <FileText className="w-6 h-6" />
-                {viewingReceipt.fileName}
+                {viewingReceipt.file_name}
               </h2>
               <button
                 onClick={() => setViewingReceipt(null)}
@@ -379,7 +413,7 @@ export function ReceiptManagement({ userId }: ReceiptManagementProps) {
                 <div>
                   <p className="text-sm text-muted-foreground">{t.receiptType}</p>
                   <p className="font-medium">
-                    {RECEIPT_TYPES.find(t => t.value === viewingReceipt.type)?.[language === 'ms' ? 'labelMs' : 'labelEn']}
+                    {RECEIPT_TYPES.find(type => type.value === viewingReceipt.type)?.[language === 'ms' ? 'labelMs' : 'labelEn']}
                   </p>
                 </div>
                 <div>
@@ -400,17 +434,17 @@ export function ReceiptManagement({ userId }: ReceiptManagementProps) {
               
               {/* File Preview */}
               <div className="border border-border rounded-xl overflow-hidden">
-                {viewingReceipt.fileType.startsWith('image/') ? (
+                {viewingReceipt.file_type.startsWith('image/') ? (
                   <img 
-                    src={viewingReceipt.fileUrl} 
-                    alt={viewingReceipt.fileName}
+                    src={viewingReceipt.file_url} 
+                    alt={viewingReceipt.file_name}
                     className="w-full max-h-96 object-contain bg-black/5"
                   />
-                ) : viewingReceipt.fileType === 'application/pdf' ? (
+                ) : viewingReceipt.file_type === 'application/pdf' ? (
                   <iframe 
-                    src={viewingReceipt.fileUrl}
+                    src={viewingReceipt.file_url}
                     className="w-full h-96"
-                    title={viewingReceipt.fileName}
+                    title={viewingReceipt.file_name}
                   />
                 ) : (
                   <div className="p-8 text-center">
@@ -481,9 +515,9 @@ export function ReceiptManagement({ userId }: ReceiptManagementProps) {
                   </div>
                   
                   <div className="flex items-center gap-2 mb-2">
-                    {getFileIcon(receipt.fileType)}
+                    {getFileIcon(receipt.file_type)}
                     <span className="text-sm text-foreground truncate flex-1">
-                      {receipt.fileName}
+                      {receipt.file_name}
                     </span>
                   </div>
                   
